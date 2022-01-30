@@ -1,4 +1,5 @@
-;unicode - DLL - compiler x86
+﻿;unicode - DLL - compiler x86
+EnableExplicit
 
 Global Dim arr_rgb(2)
 Global Dim arr_hsb(2)
@@ -20,7 +21,7 @@ EndStructure
 Structure FuncItem Align #PB_Structure_AlignC
 	_itemName.s{64}
 	*_pFunc
-	_cmdID.i
+	_cmdID.l
 	_init2Check.b
 	*_pShortcutKey.ShortcutKey
 EndStructure
@@ -28,10 +29,29 @@ EndStructure
 ; ==================================
 ; 2 Обязательные процедуры DLL
 ; ==================================
+; Декларируем процедуры, чтобы можно было и ставить в любом поярдке
 Declare Highlight_All()
+Declare GetCurrentScintilla()
 Declare Menu()
+Declare MakeScintillaText(text.s, *sciLength.Integer=0)
+Declare isNumStr(Num$, islen=0)
+Declare MakeScintillaText(text.s, *sciLength.Integer=0)
+Declare isHexStr(Hex$, islen=0)
+Declare Set_Slider_Color_RGB()
+Declare Set_Slider_Color_Sel_Ind()
+Declare Slider_Chande_Color()
+Declare rgb_to_hsb()
+Declare hsb_to_rgb()
+Declare Color(*regex, regexLength, n, *sciptr)
 
-Prototype ScintillaDirect(sciptr, msg, param1 = 0, param2 = 0)
+PrototypeC ScintillaDirect(sciptr, msg, param1 = 0, param2 = 0)
+
+Global Scintilla.ScintillaDirect=0
+
+; Константы для получения экземпляра Scintilla
+#WM_USER = 1024
+#NPPMSG = #WM_USER + 1000
+#NPPM_GETCURRENTSCINTILLA = #NPPMSG + 4
 
 
 CompilerIf #PB_Compiler_LineNumbering=0
@@ -65,27 +85,12 @@ EndProcedure
 
 
 ProcedureDLL AttachProcess(Instance)
+	Protected i
 	;
 	;<< Когда Notepad++ задействовал этот плагин при запуске Notepad++ >>
 	; Ваш код инициализации здесь
 
 	OnErrorCall(@FatalError())
-
-	; Плаг может быть в AppData, нужен путь процесса Notepad++
-	If OpenLibrary(0, "Scintilla.dll")=0
-		If OpenLibrary(0, "..\Scintilla.dll")=0
-			If OpenLibrary(0, "SciLexer.dll")=0
-				OpenLibrary(0, "..\SciLexer.dll")
-			EndIf
-		EndIf
-	EndIf
-
-	Global Scintilla.ScintillaDirect=0
-
-	; Если под номером 0 является открытая библиотека, получаем её функцию
-	If IsLibrary(0)
-		Scintilla = GetFunction(0, "Scintilla_DirectFunction")
-	EndIf
 
 	Global PathConfig$
 	; Здесь определяем путь к конфигам, взависимости от портабельная или нет, WinXP или Win7 и выше
@@ -124,6 +129,7 @@ ProcedureDLL AttachProcess(Instance)
 			ExaminePreferenceKeys()
 			For i=1 To 12
 				If NextPreferenceKey()
+; 					тут нужно создать строку ограниченной длины, чтобы если в языковом файле строка 4000 символов, то была бы обрезка
 					aLng(i) = PreferenceKeyName()
 				Else
 					Break
@@ -208,6 +214,7 @@ CompilerIf #PB_Compiler_Processor = #PB_Processor_x86
 		NppData\_nppHandle=*NppHandle
 		NppData\_scintillaMainHandle=*ScintillaMainHandle
 		NppData\_scintillaSecondHandle=*ScintillaSecondHandle
+		Scintilla = SendMessage_(NppData\_scintillaMainHandle, #SCI_GETDIRECTFUNCTION, 0, 0)
 		;
 		;<< Когда инфа Notepad++ изменилась >>
 		; Ваш код здесь
@@ -221,6 +228,7 @@ CompilerElse ; иначе для x64
 	ProcedureCDLL setInfo(*Npp.NppData)
 
 		CopyStructure(*Npp, NppData, NppData)
+		Scintilla = SendMessage_(NppData\_scintillaMainHandle, #SCI_GETDIRECTFUNCTION, 0, 0)
 		;
 		;<< Когда инфа Notepad++ изменилась >>
 		; Ваш код здесь
@@ -270,6 +278,16 @@ CompilerElse
 	#TextEncoding = #PB_Ascii
 CompilerEndIf
 
+Procedure GetCurrentScintilla()
+	Protected instance_sci
+	SendMessage_(NppData\_nppHandle, #NPPM_GETCURRENTSCINTILLA, 0, @instance_sci)
+	If instance_sci
+		ProcedureReturn NppData\_scintillaSecondHandle
+	Else
+		ProcedureReturn NppData\_scintillaMainHandle
+	EndIf
+EndProcedure
+
 ; какой то аналог предыдущей процедуры
 Procedure MakeScintillaText(text.s, *sciLength.Integer=0)
 	Static sciLength : sciLength=StringByteLength(text, #TextEncoding)
@@ -280,12 +298,12 @@ Procedure MakeScintillaText(text.s, *sciLength.Integer=0)
 EndProcedure
 
 ; Procedure Color(regex1$, n)
-Procedure Color(*regex, regexLength, n)
+Procedure Color(*regex, regexLength, n, *sciptr)
 	Protected txtLen, StartPos, EndPos, firstMatchPos
 	; 	получить активность scintilla, их же 2 окна, с каким работаем, в какой курсор
 	;MessageRequester("PB Plugin for notepad++", "Test... "+NppData\_scintillaMainHandle)
 
-	*sciptr = SendMessage_(NppData\_scintillaMainHandle, #SCI_GETDIRECTPOINTER, 0, 0) ; хендл главного-первого окна scintilla текущей вкладки
+; 	*sciptr = SendMessage_(GetCurrentScintilla(), #SCI_GETDIRECTPOINTER, 0, 0) ; указатель передали параметром, зачем 100 раз получать
 
 	; Устанавливает режим поиска (REGEX + POSIX фигурные скобки)
 	ScintillaMsg(*sciptr, #SCI_SETSEARCHFLAGS, #SCFIND_REGEXP | #SCFIND_POSIX)
@@ -324,10 +342,9 @@ EndProcedure
 IncludeFile "Form.pbf"
 
 Procedure Highlight_All()
-	Protected Color1.l, regex1$, n
+	Protected Color1.l, regex1$, n, *mem1, *mem2, *sciptr, txtLen, regexLength
 	If OpenPreferences(PathConfig$ + "\Highlight_Sample.ini") ; открываем ini
-		Lexer$ = GetGadgetText(#Combo_Sample)
-		If PreferenceGroup(Lexer$) ; выбираем группу (секцию)
+		If PreferenceGroup(GetGadgetText(#Combo_Sample)) ; выбираем группу (секцию)
 			ExaminePreferenceKeys()
 			While NextPreferenceKey()
 				n = Val(PreferenceKeyName())
@@ -336,26 +353,29 @@ Procedure Highlight_All()
 
 
 
-				*sciptr = SendMessage_(NppData\_scintillaMainHandle, #SCI_GETDIRECTPOINTER, 0, 0) ; хендл окна scintilla
-				If ScintillaMsg(*sciptr, #SCI_GETCODEPAGE) = 0
-					*MemoireID = UTF8(regex1$)
-					If *MemoireID ; Если указатель получен, то
-						*MemID_res = AllocateMemory(5000) ; Выделяем память на 5000 символов
-						If *MemID_res					  ; Если указатель получен, то
-							ScintillaMsg(*sciptr, #SCI_ENCODEDFROMUTF8, *MemoireID, *MemID_res)
-							regex1$ = PeekS(*MemID_res) ; Считываем значение из области памяти
-							FreeMemory(*MemID_res)
+				txtLen = StringByteLength(regex1$, #PB_Unicode)
+				*sciptr = SendMessage_(GetCurrentScintilla(), #SCI_GETDIRECTPOINTER, 0, 0) ; хендл окна scintilla
+				
+				Select ScintillaMsg(*sciptr, #SCI_GETCODEPAGE)
+					Case 0
+						*mem1 = UTF8(regex1$)
+						If *mem1 ; Если указатель получен, то
+							*mem2 = AllocateMemory(txtLen + 2, #PB_Memory_NoClear) ; Выделяем память на 5000 символов
+							If *mem2					  ; Если указатель получен, то
+								ScintillaMsg(*sciptr, #SCI_ENCODEDFROMUTF8, *mem1, *mem2) ; конвертирует данные из UTF-8 в кодировку документа
+								regex1$ = PeekS(*mem2) ; Считываем значение из области памяти
+								FreeMemory(*mem2)
+							EndIf
+							FreeMemory(*mem1)
 						EndIf
-						FreeMemory(*MemoireID)
-					EndIf
-					Color(@regex1$, Len(regex1$), n)
+						Color(@regex1$, Len(regex1$), n, *sciptr)
 
-					; Попытка конвертировать текст поиска в UTF-8, на самом деле он и так в UTF-8, а кроме этого есть функция UTF8(regex1$)
-				ElseIf ScintillaMsg(*sciptr, #SCI_GETCODEPAGE) = 65001
-					; MessageRequester("Кодировка", Str(ScintillaMsg(*sciptr, #SCI_GETCODEPAGE)))
-					; MakeUTF8Text(regex1$)
-					Color(MakeScintillaText(regex1$, @regexLength), @regexLength, n)
-				EndIf
+						; Попытка конвертировать текст поиска в UTF-8, на самом деле он и так в UTF-8, а кроме этого есть функция UTF8(regex1$)
+					Case #SC_CP_UTF8
+						; MessageRequester("Кодировка", Str(ScintillaMsg(*sciptr, #SCI_GETCODEPAGE)))
+						; MakeUTF8Text(regex1$)
+						Color(MakeScintillaText(regex1$, @regexLength), @regexLength, n, *sciptr)
+				EndSelect
 
 				; Color(regex1$, n)
 				; Color(@regex1$, Len(regex1$), n)
@@ -462,10 +482,11 @@ Procedure rgb_to_hsb()
 
 	If max = min
 		arr_hsb(0)=0
-	ElseIf max = arr_rgb(0) And arr_rgb(1)>=arr_rgb(2)
+	ElseIf max = arr_rgb(0)
 		arr_hsb(0)=60*(arr_rgb(1)-arr_rgb(2))/(max - min)
-	ElseIf max = arr_rgb(0) And arr_rgb(1)<arr_rgb(2)
-		arr_hsb(0)=60*(arr_rgb(1)-arr_rgb(2))/(max - min)+360
+		If arr_rgb(1)<arr_rgb(2)
+			arr_hsb(0)+360
+		EndIf
 	ElseIf max = arr_rgb(1)
 		arr_hsb(0)=60*(arr_rgb(2)-arr_rgb(0))/(max - min)+120
 	ElseIf max = arr_rgb(2)
@@ -490,6 +511,7 @@ EndProcedure
 
 
 Procedure Slider_Chande_Color()
+	Protected rgb_color, *sciptr
 	arr_hsb(0) = GetGadgetState(#Slider1)
 	arr_hsb(1) = GetGadgetState(#Slider2)
 	arr_hsb(2) = GetGadgetState(#Slider3)
@@ -497,7 +519,8 @@ Procedure Slider_Chande_Color()
 	rgb_color = RGB(arr_rgb(0), arr_rgb(1), arr_rgb(2))
 	; n = GetGadgetItemData(#Combo_Color , GetGadgetState(#Combo_Color))
 	; rgb_color = Val("$" + Mid(RBG$, 5, 2)+Mid(RBG$, 3, 2)+Mid(RBG$, 1, 2)) ; конвертирует RBG в BGR и преобразует в число
-	*sciptr = SendMessage_(NppData\_scintillaMainHandle, #SCI_GETDIRECTPOINTER, 0, 0) ; хендл окна scintilla
+	*sciptr = SendMessage_(GetCurrentScintilla(), #SCI_GETDIRECTPOINTER, 0, 0) ; хендл окна scintilla
+	
 																					  ; ScintillaMsg(*sciptr, #SCI_INDICSETFORE, n, rgb_color)
 	ScintillaMsg(*sciptr, #SCI_INDICSETFORE, num_item_color, rgb_color)
 	SetGadgetColor(#Color, #PB_Gadget_BackColor, rgb_color)
@@ -508,8 +531,9 @@ Procedure Slider_Chande_Color()
 EndProcedure
 
 Procedure Set_Slider_Color_Sel_Ind()
-	Protected RBG
-	*sciptr = SendMessage_(NppData\_scintillaMainHandle, #SCI_GETDIRECTPOINTER, 0, 0) ; хендл окна scintilla
+	Protected RBG, *sciptr
+	*sciptr = SendMessage_(GetCurrentScintilla(), #SCI_GETDIRECTPOINTER, 0, 0) ; хендл окна scintilla
+	
 	RBG = ScintillaMsg(*sciptr, #SCI_INDICGETFORE, num_item_color)					  ; получает цвет
 	; RBG = Val("$" + String$)
 	arr_rgb(0) = Red(RBG)
@@ -525,16 +549,13 @@ Procedure Set_Slider_Color_Sel_Ind()
 	SetGadgetText(#Bright, Str(arr_hsb(2)))
 
 	SetGadgetText(#EditColor , RSet(Hex(RGB(arr_rgb(2), arr_rgb(1), arr_rgb(0))), 6, "0"))
-
-	rgb_color = RGB(arr_rgb(0), arr_rgb(1), arr_rgb(2))
-	SetGadgetColor(#Color, #PB_Gadget_BackColor, rgb_color)
+	SetGadgetColor(#Color, #PB_Gadget_BackColor, RGB(arr_rgb(0), arr_rgb(1), arr_rgb(2)))
 EndProcedure
 
 
 Procedure Set_Slider_Color_RGB()
-	Protected RBG
-	String$ = GetGadgetText(#EditColor)
-	RBG = Val("$" + String$)
+	Protected RBG, rgb_color, *sciptr
+	RBG = Val("$" + GetGadgetText(#EditColor))
 	arr_rgb(2) = Red(RBG)
 	arr_rgb(1) = Green(RBG)
 	arr_rgb(0) = Blue(RBG)
@@ -550,13 +571,14 @@ Procedure Set_Slider_Color_RGB()
 	rgb_color = RGB(arr_rgb(0), arr_rgb(1), arr_rgb(2))
 	SetGadgetColor(#Color, #PB_Gadget_BackColor, rgb_color)
 
-	*sciptr = SendMessage_(NppData\_scintillaMainHandle, #SCI_GETDIRECTPOINTER, 0, 0) ; хендл окна scintilla
+	*sciptr = SendMessage_(GetCurrentScintilla(), #SCI_GETDIRECTPOINTER, 0, 0) ; хендл окна scintilla
+	
 	ScintillaMsg(*sciptr, #SCI_INDICSETFORE, num_item_color, rgb_color)
 	; RBG = ScintillaMsg(*sciptr, #SCI_INDICGETFORE, num_item_color)	  ; получает цвет
 EndProcedure
 
 Procedure Events()
-	Protected regex1$, n, txtLen, style
+	Protected regex1$, n, txtLen, style, *mem1, *mem2, *sciptr, Count, num, regexLength, i
 	Select Event()
 		Case #PB_Event_Gadget
 			Select EventGadget()
@@ -569,12 +591,12 @@ Procedure Events()
 				Case #Slider2 ; ползунок
 					arr_hsb(1) = GetGadgetState(#Slider2)
 					Slider_Chande_Color()
-					SetGadgetText(#Hue, Str(arr_hsb(1)))
+					SetGadgetText(#Satur, Str(arr_hsb(1)))
 
 				Case #Slider3 ; ползунок
 					arr_hsb(2) = GetGadgetState(#Slider3)
 					Slider_Chande_Color()
-					SetGadgetText(#Hue, Str(arr_hsb(2)))
+					SetGadgetText(#Bright, Str(arr_hsb(2)))
 
 				Case #Combo_Color ; Выбор цвета
 					num_item_color = GetGadgetItemData(#Combo_Color , GetGadgetState(#Combo_Color))
@@ -588,7 +610,7 @@ Procedure Events()
 					Highlight_All()
 
 				Case #Button_Clear ; очистить подсветку
-					*sciptr = SendMessage_(NppData\_scintillaMainHandle, #SCI_GETDIRECTPOINTER, 0, 0) ; хендл окна scintilla
+					*sciptr = SendMessage_(GetCurrentScintilla(), #SCI_GETDIRECTPOINTER, 0, 0) ; хендл окна scintilla
 					txtLen = ScintillaMsg(*sciptr, #SCI_GETTEXTLENGTH)								  ; получает длину текста
 					n = GetGadgetItemData(#Combo_Color , GetGadgetState(#Combo_Color))
 					If n
@@ -597,7 +619,8 @@ Procedure Events()
 					EndIf
 
 				Case #Button_ClearAll ; очистить подсветку
-					*sciptr = SendMessage_(NppData\_scintillaMainHandle, #SCI_GETDIRECTPOINTER, 0, 0) ; хендл окна scintilla
+					*sciptr = SendMessage_(GetCurrentScintilla(), #SCI_GETDIRECTPOINTER, 0, 0) ; хендл окна scintilla
+					
 					txtLen = ScintillaMsg(*sciptr, #SCI_GETTEXTLENGTH)								  ; получает длину текста
 					For n=3 To 18
 						ScintillaMsg(*sciptr, #SCI_SETINDICATORCURRENT, n)	   ; делает индикатор под номером 7 текущим
@@ -608,7 +631,8 @@ Procedure Events()
 					regex1$ = GetGadgetText(#Combo_RegEx)
 					; RBG$ = GetGadgetText(#Combo_Color)
 					; Item = GetGadgetState(#Combo_Color)
-					If Len(regex1$)
+					txtLen = StringByteLength(regex1$, #PB_Unicode)
+					If txtLen
 						n = GetGadgetItemData(#Combo_Color , GetGadgetState(#Combo_Color))
 						; MessageRequester("ассоциированное значение", Str(n))
 
@@ -616,35 +640,31 @@ Procedure Events()
 
 						; От старого
 						; ScintillaMsg(*sciptr, #SCI_SETLENGTHFORENCODE, -1)
-						; regex1$ = PeekS(*MemID_res, -1, #PB_Ascii)            ; Считываем значение из области памяти
+						; regex1$ = PeekS(*mem2, -1, #PB_Ascii)            ; Считываем значение из области памяти
 						; Попытка конвертировать текст поиска в кодировку документа, пока не помогло
 
-						*sciptr = SendMessage_(NppData\_scintillaMainHandle, #SCI_GETDIRECTPOINTER, 0, 0) ; хендл окна scintilla
-						If ScintillaMsg(*sciptr, #SCI_GETCODEPAGE) = 0
-							*MemoireID = UTF8(regex1$)
-							If *MemoireID ; Если указатель получен, то
-								*MemID_res = AllocateMemory(5000) ; Выделяем память на 5000 символов
-								If *MemID_res					  ; Если указатель получен, то
-									ScintillaMsg(*sciptr, #SCI_ENCODEDFROMUTF8, *MemoireID, *MemID_res)
-									regex1$ = PeekS(*MemID_res) ; Считываем значение из области памяти
-									FreeMemory(*MemID_res)
+						*sciptr = SendMessage_(GetCurrentScintilla(), #SCI_GETDIRECTPOINTER, 0, 0) ; хендл окна scintilla
+						
+
+						Select ScintillaMsg(*sciptr, #SCI_GETCODEPAGE)
+							Case 0
+								*mem1 = UTF8(regex1$)
+								If *mem1 ; Если указатель получен, то
+									*mem2 = AllocateMemory(txtLen + 2, #PB_Memory_NoClear) ; Выделяем память на число байтов для текста в самой шировокй кодировке UTF-16 (+2)
+									If *mem2					  ; Если указатель получен, то
+										ScintillaMsg(*sciptr, #SCI_ENCODEDFROMUTF8, *mem1, *mem2) ; конвертирует данные из UTF-8 в кодировку документа
+										regex1$ = PeekS(*mem2) ; Считываем значение из области памяти
+										FreeMemory(*mem2)
+									EndIf
+									FreeMemory(*mem1)
 								EndIf
-								FreeMemory(*MemoireID)
-							EndIf
-							Color(@regex1$, Len(regex1$), n)
-
-							; Попытка конвертировать текст поиска в UTF-8, на самом деле он и так в UTF-8, а кроме этого есть функция UTF8(regex1$)
-						ElseIf ScintillaMsg(*sciptr, #SCI_GETCODEPAGE) = 65001
-							; MessageRequester("Кодировка", Str(ScintillaMsg(*sciptr, #SCI_GETCODEPAGE)))
-							; MakeUTF8Text(regex1$)
-							Color(MakeScintillaText(regex1$, @regexLength), @regexLength, n)
-						EndIf
-
-						; MessageRequester("Сообщение", regex1$ + #CRLF$ + Str(Len(regex1$)))
-
-						; zz =  Len(regex1$)
-						; Color(@regex1$, @zz, n)
-						; Color(@regex1$, Len(regex1$), n)
+								Color(@regex1$, Len(regex1$), n, *sciptr)
+								; Попытка конвертировать текст поиска в UTF-8, на самом деле он и так в UTF-8, а кроме этого есть функция UTF8(regex1$)
+							Case #SC_CP_UTF8
+								; MessageRequester("Кодировка", Str(ScintillaMsg(*sciptr, #SCI_GETCODEPAGE)))
+								; MakeUTF8Text(regex1$)
+								Color(MakeScintillaText(regex1$, @regexLength), @regexLength, n, *sciptr)
+						EndSelect
 					EndIf
 
 				Case #Button_ini1 ; Открыть ini-файл
@@ -654,7 +674,8 @@ Procedure Events()
 					RunProgram(PathConfig$ + "\Highlight_Sample.ini")
 
 				Case #Combo_Indic ; Выбор индикатора
-					*sciptr = SendMessage_(NppData\_scintillaMainHandle, #SCI_GETDIRECTPOINTER, 0, 0) ; хендл окна scintilla
+					*sciptr = SendMessage_(GetCurrentScintilla(), #SCI_GETDIRECTPOINTER, 0, 0) ; хендл окна scintilla
+					
 																									  ; MessageRequester("Индекс", Str(GetGadgetState(#Combo_Indic)))
 																									  ; style = GetGadgetItemData(#Combo_Indic , GetGadgetState(#Combo_Indic))
 					style =GetGadgetState(#Combo_Indic)
@@ -676,6 +697,7 @@ EndProcedure
 
 ; проверка, что строка представлена в виде шестнадцатеричного числа
 Procedure isHexStr(Hex$, islen=0)
+	Protected i
 	If islen And Not Len(Hex$)=islen : ProcedureReturn 0 : EndIf
 	For i=48 To 57
 		; ReplaceString(Hex$,  Chr(i) , "Z", 2, 1)
@@ -694,6 +716,7 @@ EndProcedure
 
 ; проверка, что строка представлена в виде шестнадцатеричного числа
 Procedure isNumStr(Num$, islen=0)
+	Protected i
 	For i=48 To 57
 		; ReplaceString(Num$,  Chr(i) , "Z", 2, 1)
 		Num$ = RemoveString(Num$ , Chr(i))
@@ -706,9 +729,14 @@ Procedure isNumStr(Num$, islen=0)
 EndProcedure
 
 Procedure Menu()
+	Protected *sciptr, *sciptr2
+	Protected Color1.l, n=0, num=3, RBG$, img_id, img, KeyNum, KeyName$
+	Protected w, h, i
 	If IsWindow(#Window_0)=0 ; если окно не найдено, то
 
+; 		*sciptr = SendMessage_(GetCurrentScintilla(), #SCI_GETDIRECTPOINTER, 0, 0) ; хендл окна scintilla
 		*sciptr = SendMessage_(NppData\_scintillaMainHandle, #SCI_GETDIRECTPOINTER, 0, 0) ; хендл окна scintilla
+		*sciptr2 = SendMessage_(NppData\_scintillaSecondHandle, #SCI_GETDIRECTPOINTER, 0, 0) ; хендл окна scintilla, чтобы создать индикаторы для 2-го экземпляра
 		; Показать какие стили зарегистрированы, чтобы не трогать их
 		; ttt$=""
 		; For i=0 To 35
@@ -722,7 +750,6 @@ Procedure Menu()
 		BindEvent(#PB_Event_CloseWindow, @Events(), #Window_0)
 
 		; Добавление палитры в комбо
-		Protected Color1.l, n=0, num=3, RBG$, img_id, img, KeyNum, KeyName$
 		If OpenPreferences(PathConfig$ + "\Highlight.ini") ; открываем ini
 			If PreferenceGroup("Palette")				   ; выбираем группу (секцию)
 				ExaminePreferenceKeys()
@@ -739,8 +766,12 @@ Procedure Menu()
 					AddGadgetItem(#Combo_Color, -1 , RBG$ + "   (" + Str(num) + ")", img) ; Добавляем элемент в комобо
 					SetGadgetItemData(#Combo_Color , n , num)							  ; к индексу привязываем значение палитры, чтобы выбирать связанный цвет
 																						  ; Создание индикаторов
+					
 					ScintillaMsg(*sciptr, #SCI_INDICSETSTYLE, num, 17)					  ; #INDIC_TEXTFORE = 17 создат индикатор под номером 7 (занятые по уиолчанию 0, 1, 2)
 					ScintillaMsg(*sciptr, #SCI_INDICSETFORE, num, Color1)				  ; назначает цвет индикатора под номером 7 - зелёный
+					
+					ScintillaMsg(*sciptr2, #SCI_INDICSETSTYLE, num, 17)					  ; #INDIC_TEXTFORE = 17 создат индикатор под номером 7 (занятые по уиолчанию 0, 1, 2)
+					ScintillaMsg(*sciptr2, #SCI_INDICSETFORE, num, Color1)				  ; назначает цвет индикатора под номером 7 - зелёный
 					n+1
 					num+1
 				Wend
@@ -796,7 +827,6 @@ Procedure Menu()
 
 		; Спектр
 		If StartDrawing(CanvasOutput(#Spectr))
-			Protected w, h
 			w=OutputWidth()
 			h=OutputHeight()
 			arr_hsb(1) = 100
@@ -833,8 +863,18 @@ DataSection
 	Highlight_Sample_iniend:
 EndDataSection
 
+; IDE Options = PureBasic 5.72 (Windows - x64)
 ; ExecutableFormat = Shared dll
-; FirstLine = 789
-; Folding = -----
+; CursorPosition = 209
+; FirstLine = 165
+; Folding = V59-z
+; DPIAware
 ; EnableOnError
 ; Executable = Highlight.dll
+; IncludeVersionInfo
+; VersionField0 = 0.3.0.0
+; VersionField2 = AZJIO
+; VersionField3 = Highlight
+; VersionField4 = 0.3
+; VersionField6 = Highlight
+; VersionField9 = AZJIO
